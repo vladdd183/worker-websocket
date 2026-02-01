@@ -1,0 +1,54 @@
+# =============================================================================
+# ВАРИАНТ 2: Минимальный образ (ЭКСПЕРИМЕНТАЛЬНЫЙ)
+# Плюсы: Меньший размер (~8GB)
+# Минусы: Может быть проблемы с зависимостями
+# =============================================================================
+FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Системные зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    wget \
+    ffmpeg \
+    libsndfile1 \
+    libsox-dev \
+    sox \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Устанавливаем NeMo ASR с минимальными зависимостями
+# Закрепляем версии для избежания конфликтов
+RUN pip install --no-cache-dir \
+    "nemo_toolkit[asr]==2.0.0" \
+    "datasets==2.18.0" \
+    "pyarrow==15.0.0" \
+    "transformers>=4.40.0,<4.50.0" \
+    "huggingface-hub>=0.23.0"
+
+# Дополнительные зависимости
+RUN pip install --no-cache-dir \
+    runpod>=1.7.0 \
+    websockets>=12.0 \
+    aiohttp>=3.9.0 \
+    pydub>=0.25.0
+
+# Flash Attention (опционально)
+RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "Flash Attention skipped"
+
+# Копируем файлы
+COPY asr_engine.py /app/
+COPY websocket_handler.py /app/
+COPY audio_utils.py /app/
+COPY rp_handler.py /app/
+
+EXPOSE 8765 8000
+
+ENV CUDA_MODULE_LOADING=LAZY
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV TOKENIZERS_PARALLELISM=false
+
+CMD ["python", "-u", "rp_handler.py"]
