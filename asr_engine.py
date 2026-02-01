@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 # Глобальные настройки оптимизации
 MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v3"
 USE_FLASH_ATTENTION = True
-USE_TORCH_COMPILE = True
+USE_TORCH_COMPILE = False  # Отключено для быстрого cold start (~30-60 сек экономии)
 USE_BF16 = True  # BF16 быстрее на Ampere+, FP16 на старых GPU
+SKIP_WARMUP = False  # Пропустить warmup для ещё более быстрого cold start
 
 # RunPod Cached Models path
 RUNPOD_CACHE_DIR = "/runpod-volume/huggingface-cache/hub"
@@ -155,20 +156,23 @@ class ASREngine:
         # 2. Evaluation mode
         self._model.eval()
         
-        # 3. torch.compile для JIT-оптимизации (PyTorch 2.0+)
+        # 3. torch.compile отключён для быстрого cold start
+        # Компиляция занимает 30-60 сек при первом запуске
+        # Если нужна максимальная скорость inference (после cold start),
+        # можно включить: USE_TORCH_COMPILE = True
         if USE_TORCH_COMPILE and hasattr(torch, 'compile'):
             try:
-                logger.info("Применяем torch.compile...")
-                # mode="reduce-overhead" оптимизирует для низкой latency
-                # mode="max-autotune" максимизирует throughput (дольше компиляция)
+                logger.info("Применяем torch.compile (это займёт время)...")
                 self._model = torch.compile(
                     self._model, 
                     mode="reduce-overhead",
-                    fullgraph=False  # False более стабильно с NeMo
+                    fullgraph=False
                 )
                 logger.info("torch.compile применён успешно")
             except Exception as e:
                 logger.warning(f"torch.compile не удалось применить: {e}")
+        else:
+            logger.info("torch.compile отключён для быстрого cold start")
         
         # 4. CUDA optimizations
         if self.device.type == "cuda":
@@ -179,29 +183,27 @@ class ASREngine:
     
     def _warmup(self):
         """Прогрев модели для стабильной latency"""
-        logger.info("Прогрев модели...")
+        if SKIP_WARMUP:
+            logger.info("Warmup пропущен (SKIP_WARMUP=True)")
+            return
         
-        # Создаём dummy аудио (1 секунда тишины)
+        logger.info("Прогрев модели (1 итерация)...")
+        
+        # Создаём dummy аудио (0.5 секунды - минимум для быстрого warmup)
         sample_rate = 16000
-        dummy_audio = np.zeros(sample_rate, dtype=np.float32)
+        dummy_audio = np.zeros(sample_rate // 2, dtype=np.float32)
         
-        # Несколько итераций прогрева
-        with torch.no_grad():
-            for i in range(3):
-                try:
-                    # Временный файл для warmup
-                    import tempfile
-                    import soundfile as sf
-                    
-                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
-                        sf.write(f.name, dummy_audio, sample_rate)
-                        _ = self._model.transcribe([f.name])
-                except Exception as e:
-                    logger.warning(f"Warmup итерация {i} не удалась: {e}")
-        
-        # Очистка CUDA кэша
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
+        # Одна итерация прогрева (достаточно для инициализации CUDA kernels)
+        with torch.no_grad(), torch.inference_mode():
+            try:
+                import tempfile
+                import soundfile as sf
+                
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
+                    sf.write(f.name, dummy_audio, sample_rate)
+                    _ = self._model.transcribe([f.name])
+            except Exception as e:
+                logger.warning(f"Warmup не удался: {e}")
         
         logger.info("Прогрев завершён")
     
