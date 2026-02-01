@@ -43,11 +43,8 @@ RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "Flash At
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the model during build (optional but recommended)
-# This makes cold starts faster
-RUN python -c "import nemo.collections.asr as nemo_asr; \
-    model = nemo_asr.models.ASRModel.from_pretrained('nvidia/parakeet-tdt-0.6b-v3'); \
-    print('Model downloaded successfully')"
+# NOTE: Model will be downloaded on first run (cold start ~60-90 sec)
+# Pre-downloading during build requires GPU which is not available at build time
 
 # Copy application files
 COPY asr_engine.py /app/
