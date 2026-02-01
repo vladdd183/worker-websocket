@@ -26,6 +26,34 @@ USE_FLASH_ATTENTION = True
 USE_TORCH_COMPILE = True
 USE_BF16 = True  # BF16 быстрее на Ampere+, FP16 на старых GPU
 
+# RunPod Cached Models path
+RUNPOD_CACHE_DIR = "/runpod-volume/huggingface-cache/hub"
+
+
+def find_cached_model_path(model_name: str) -> Optional[str]:
+    """
+    Поиск модели в кэше RunPod Cached Models
+    
+    Args:
+        model_name: Имя модели (например 'nvidia/parakeet-tdt-0.6b-v3')
+        
+    Returns:
+        Путь к модели или None если не найдена
+    """
+    # Конвертируем формат: "nvidia/parakeet-tdt-0.6b-v3" -> "models--nvidia--parakeet-tdt-0.6b-v3"
+    cache_name = model_name.replace("/", "--")
+    snapshots_dir = os.path.join(RUNPOD_CACHE_DIR, f"models--{cache_name}", "snapshots")
+    
+    if os.path.exists(snapshots_dir):
+        snapshots = os.listdir(snapshots_dir)
+        if snapshots:
+            model_path = os.path.join(snapshots_dir, snapshots[0])
+            logger.info(f"Найдена модель в RunPod cache: {model_path}")
+            return model_path
+    
+    logger.info(f"Модель не найдена в RunPod cache, будет загружена из HuggingFace")
+    return None
+
 
 @dataclass
 class TranscriptionResult:
@@ -80,8 +108,27 @@ class ASREngine:
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
             logger.info(f"GPU: {gpu_name}, память: {gpu_memory:.1f} GB")
         
-        # Загружаем модель
-        self._model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
+        # Проверяем RunPod Cached Models
+        cached_path = find_cached_model_path(MODEL_NAME)
+        
+        if cached_path:
+            # Загружаем из локального кэша RunPod
+            logger.info(f"Загрузка из RunPod cache: {cached_path}")
+            # Ищем .nemo файл в директории
+            nemo_files = [f for f in os.listdir(cached_path) if f.endswith('.nemo')]
+            if nemo_files:
+                model_file = os.path.join(cached_path, nemo_files[0])
+                logger.info(f"Найден .nemo файл: {model_file}")
+                self._model = nemo_asr.models.ASRModel.restore_from(model_file)
+            else:
+                # Пробуем загрузить как HuggingFace модель
+                logger.info("Файл .nemo не найден, загрузка через from_pretrained...")
+                self._model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
+        else:
+            # Загружаем из HuggingFace (будет скачано)
+            logger.info("Загрузка из HuggingFace...")
+            self._model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
+        
         self._model = self._model.to(self.device)
         
         # Применяем оптимизации

@@ -43,12 +43,10 @@ RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "Flash At
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download model files using huggingface-cli (no GPU required!)
-# This downloads only the files to cache, doesn't load the model into memory
-# NeMo will find them in the HuggingFace cache when loading
-RUN pip install --no-cache-dir huggingface-hub && \
-    python -c "from huggingface_hub import snapshot_download; snapshot_download('nvidia/parakeet-tdt-0.6b-v3')" && \
-    echo "Model files downloaded successfully to HuggingFace cache"
+# Model will be provided by RunPod's Cached Models feature
+# Set in endpoint config: Model = nvidia/parakeet-tdt-0.6b-v3
+# Model will be available at /runpod-volume/huggingface-cache/hub/
+# You DON'T pay for model download time with Cached Models!
 
 # Copy application files
 COPY asr_engine.py /app/
