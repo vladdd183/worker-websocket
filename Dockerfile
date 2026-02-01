@@ -1,9 +1,65 @@
-FROM python:3.10-slim
+# Base image with CUDA 12.1 and cuDNN for optimal performance
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
-WORKDIR /
-COPY requirements.txt /requirements.txt
-RUN pip install -r requirements.txt
-COPY rp_handler.py /
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
 
-# Start the container
-CMD ["python3", "-u", "rp_handler.py"]
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    git \
+    wget \
+    ffmpeg \
+    libsndfile1 \
+    libsox-dev \
+    sox \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.10 /usr/bin/python \
+    && ln -sf /usr/bin/python3.10 /usr/bin/python3
+
+# Set working directory
+WORKDIR /app
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install PyTorch with CUDA 12.1 support
+RUN pip install --no-cache-dir \
+    torch==2.2.0 \
+    torchaudio==2.2.0 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Install Flash Attention 2 (requires CUDA development tools)
+RUN pip install --no-cache-dir flash-attn --no-build-isolation
+
+# Copy requirements and install dependencies
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download the model during build (optional but recommended)
+# This makes cold starts faster
+RUN python -c "import nemo.collections.asr as nemo_asr; \
+    model = nemo_asr.models.ASRModel.from_pretrained('nvidia/parakeet-tdt-0.6b-v3'); \
+    print('Model downloaded successfully')"
+
+# Copy application files
+COPY asr_engine.py /app/
+COPY websocket_handler.py /app/
+COPY audio_utils.py /app/
+COPY rp_handler.py /app/
+
+# Expose ports
+# 8765 - WebSocket for real-time streaming
+# 8000 - HTTP for RunPod handler (if needed)
+EXPOSE 8765 8000
+
+# Set environment variables for optimization
+ENV CUDA_MODULE_LOADING=LAZY
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV TOKENIZERS_PARALLELISM=false
+
+# Start the handler
+CMD ["python", "-u", "rp_handler.py"]

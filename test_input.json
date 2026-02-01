@@ -1,6 +1,27 @@
 {
+  "websocket_mode": {
     "input": {
-        "prompt": "John Doe",
-        "seconds": 15
+      "action": "websocket"
     }
+  },
+  "batch_from_url": {
+    "input": {
+      "audio_url": "https://dldata-public.s3.us-east-2.amazonaws.com/2086-149220-0033.wav",
+      "timestamps": true
+    }
+  },
+  "batch_long_audio": {
+    "input": {
+      "audio_url": "https://example.com/long_audio.mp3",
+      "timestamps": true,
+      "use_local_attention": true,
+      "chunk_long_audio": true,
+      "chunk_duration": 30.0
+    }
+  },
+  "get_info": {
+    "input": {
+      "action": "info"
+    }
+  }
 }

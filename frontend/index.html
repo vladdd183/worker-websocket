@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parakeet ASR - Real-time Speech Recognition</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🦜 Parakeet ASR</h1>
+            <p class="subtitle">Real-time Speech Recognition (parakeet-tdt-0.6b-v3)</p>
+        </header>
+
+        <!-- Connection Section -->
+        <section class="connection-section card">
+            <h2>Подключение к воркеру</h2>
+            <div class="connection-form">
+                <div class="input-group">
+                    <label for="ws-url">WebSocket URL:</label>
+                    <input type="text" id="ws-url" value="ws://localhost:8765" placeholder="ws://IP:PORT">
+                </div>
+                <div class="button-group">
+                    <button id="connect-btn" class="btn btn-primary">Подключиться</button>
+                    <button id="disconnect-btn" class="btn btn-secondary" disabled>Отключиться</button>
+                    <button id="healthcheck-btn" class="btn btn-info" disabled>Healthcheck</button>
+                </div>
+            </div>
+            <div id="connection-status" class="status status-disconnected">
+                <span class="status-dot"></span>
+                <span class="status-text">Не подключено</span>
+            </div>
+            <div id="model-info" class="model-info hidden"></div>
+        </section>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="realtime">🎤 Real-time (Микрофон)</button>
+            <button class="tab-btn" data-tab="batch">📁 Batch (Файл)</button>
+        </div>
+
+        <!-- Real-time Tab -->
+        <section id="realtime-tab" class="tab-content active">
+            <div class="card">
+                <h2>Real-time Streaming</h2>
+                
+                <!-- Settings -->
+                <div class="settings-grid">
+                    <div class="setting">
+                        <label for="chunk-size">Размер чанка (мс):</label>
+                        <input type="range" id="chunk-size" min="100" max="5000" value="500" step="100">
+                        <span id="chunk-size-value">500 мс</span>
+                    </div>
+                    <div class="setting">
+                        <label for="sample-rate">Sample Rate:</label>
+                        <select id="sample-rate">
+                            <option value="16000" selected>16000 Hz</option>
+                            <option value="44100">44100 Hz</option>
+                            <option value="48000">48000 Hz</option>
+                        </select>
+                    </div>
+                    <div class="setting">
+                        <label>
+                            <input type="checkbox" id="show-timestamps" checked>
+                            Показывать timestamps
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="controls">
+                    <button id="start-recording" class="btn btn-success btn-large" disabled>
+                        <span class="icon">🎙️</span>
+                        Начать запись
+                    </button>
+                    <button id="stop-recording" class="btn btn-danger btn-large" disabled>
+                        <span class="icon">⏹️</span>
+                        Остановить
+                    </button>
+                </div>
+
+                <!-- Audio Visualizer -->
+                <div class="visualizer-container">
+                    <canvas id="audio-visualizer" width="800" height="100"></canvas>
+                </div>
+
+                <!-- Stats -->
+                <div class="stats-panel">
+                    <h3>Статистика</h3>
+                    <div class="stats-grid">
+                        <div class="stat">
+                            <span class="stat-label">Отправлено чанков:</span>
+                            <span id="stat-chunks-sent" class="stat-value">0</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Получено ответов:</span>
+                            <span id="stat-responses" class="stat-value">0</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Средняя задержка:</span>
+                            <span id="stat-avg-latency" class="stat-value">- мс</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Мин. задержка:</span>
+                            <span id="stat-min-latency" class="stat-value">- мс</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Макс. задержка:</span>
+                            <span id="stat-max-latency" class="stat-value">- мс</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">RTF (Real-Time Factor):</span>
+                            <span id="stat-rtf" class="stat-value">-</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Время записи:</span>
+                            <span id="stat-recording-time" class="stat-value">0:00</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Время обработки:</span>
+                            <span id="stat-processing-time" class="stat-value">0 мс</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transcription Output -->
+                <div class="transcription-output">
+                    <h3>Транскрипция</h3>
+                    <div id="realtime-transcription" class="transcription-text"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Batch Tab -->
+        <section id="batch-tab" class="tab-content">
+            <div class="card">
+                <h2>Batch Обработка</h2>
+
+                <!-- File Upload -->
+                <div class="file-upload-area" id="drop-zone">
+                    <input type="file" id="file-input" accept="audio/*" hidden>
+                    <div class="upload-content">
+                        <span class="upload-icon">📂</span>
+                        <p>Перетащите аудио файл сюда или <button id="browse-btn" class="btn-link">выберите файл</button></p>
+                        <p class="upload-hint">Поддерживаемые форматы: WAV, MP3, FLAC, OGG, WebM</p>
+                    </div>
+                </div>
+
+                <!-- File Info -->
+                <div id="file-info" class="file-info hidden">
+                    <div class="file-details">
+                        <span class="file-name" id="file-name"></span>
+                        <span class="file-duration" id="file-duration"></span>
+                        <span class="file-size" id="file-size"></span>
+                    </div>
+                    <audio id="audio-preview" controls></audio>
+                </div>
+
+                <!-- Batch Settings -->
+                <div class="batch-settings hidden" id="batch-settings">
+                    <h3>Настройки обработки</h3>
+                    <div class="settings-grid">
+                        <div class="setting">
+                            <label>
+                                <input type="radio" name="process-mode" value="whole" checked>
+                                Отправить целиком
+                            </label>
+                        </div>
+                        <div class="setting">
+                            <label>
+                                <input type="radio" name="process-mode" value="chunks">
+                                Разбить на чанки (FFmpeg WASM)
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div id="chunk-settings" class="chunk-settings hidden">
+                        <div class="setting">
+                            <label for="batch-chunk-size">Размер чанка (сек):</label>
+                            <input type="range" id="batch-chunk-size" min="5" max="120" value="30" step="5">
+                            <span id="batch-chunk-size-value">30 сек</span>
+                        </div>
+                        <div class="setting">
+                            <label for="overlap-size">Перекрытие (сек):</label>
+                            <input type="range" id="overlap-size" min="0" max="5" value="1" step="0.5">
+                            <span id="overlap-size-value">1 сек</span>
+                        </div>
+                        <div class="setting">
+                            <label for="parallel-chunks">Параллельных запросов:</label>
+                            <input type="number" id="parallel-chunks" min="1" max="5" value="1">
+                        </div>
+                    </div>
+
+                    <button id="start-batch" class="btn btn-primary btn-large" disabled>
+                        🚀 Начать обработку
+                    </button>
+                </div>
+
+                <!-- Progress -->
+                <div id="batch-progress" class="batch-progress hidden">
+                    <h3>Прогресс обработки</h3>
+                    
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progress-bar"></div>
+                        <span class="progress-text" id="progress-text">0%</span>
+                    </div>
+
+                    <div class="batch-stats">
+                        <div class="stat">
+                            <span class="stat-label">Чанков обработано:</span>
+                            <span id="batch-chunks-done" class="stat-value">0 / 0</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Время на чанк:</span>
+                            <span id="batch-time-per-chunk" class="stat-value">- сек</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">RTF:</span>
+                            <span id="batch-rtf" class="stat-value">-</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Оставшееся время:</span>
+                            <span id="batch-eta" class="stat-value">-</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Общее время:</span>
+                            <span id="batch-total-time" class="stat-value">0 сек</span>
+                        </div>
+                    </div>
+
+                    <!-- Chunks List -->
+                    <div class="chunks-list" id="chunks-list"></div>
+                </div>
+
+                <!-- Batch Transcription Output -->
+                <div id="batch-output" class="transcription-output hidden">
+                    <h3>Результат транскрипции</h3>
+                    <div class="output-controls">
+                        <button id="copy-result" class="btn btn-secondary">📋 Копировать</button>
+                        <button id="download-result" class="btn btn-secondary">💾 Скачать TXT</button>
+                        <button id="download-srt" class="btn btn-secondary">📄 Скачать SRT</button>
+                    </div>
+                    <div id="batch-transcription" class="transcription-text"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Latency Chart -->
+        <section class="card" id="latency-chart-section">
+            <h2>График задержек</h2>
+            <canvas id="latency-chart" width="800" height="200"></canvas>
+        </section>
+
+        <!-- Console / Logs -->
+        <section class="card">
+            <h2>Логи</h2>
+            <div class="log-controls">
+                <button id="clear-logs" class="btn btn-secondary">Очистить</button>
+                <label>
+                    <input type="checkbox" id="auto-scroll" checked>
+                    Авто-прокрутка
+                </label>
+            </div>
+            <div id="logs" class="logs-container"></div>
+        </section>
+    </div>
+
+    <!-- FFmpeg WASM -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/util.js"></script>
+    
+    <!-- App Scripts -->
+    <script src="audio-processor.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

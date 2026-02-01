@@ -1,3 +1,24 @@
-runpod==1.7.7
-websocket-server
-asyncio
+# RunPod SDK
+runpod>=1.7.0
+
+# NVIDIA NeMo ASR toolkit
+nemo_toolkit[asr]>=2.0.0
+
+# WebSocket support
+websockets>=12.0
+aiohttp>=3.9.0
+
+# Audio processing
+soundfile>=0.12.0
+librosa>=0.10.0
+pydub>=0.25.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Optimization
+triton>=2.1.0
+
+# Utilities
+tqdm>=4.66.0
+omegaconf>=2.3.0
+hydra-core>=1.3.0
