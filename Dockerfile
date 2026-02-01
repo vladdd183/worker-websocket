@@ -26,6 +26,9 @@ WORKDIR /app
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
+# Install numpy first (required for PyTorch)
+RUN pip install --no-cache-dir numpy
+
 # Install PyTorch with CUDA 12.1 support
 RUN pip install --no-cache-dir \
     torch==2.2.0 \
@@ -33,7 +36,8 @@ RUN pip install --no-cache-dir \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Install Flash Attention 2 (requires CUDA development tools)
-RUN pip install --no-cache-dir flash-attn --no-build-isolation
+# Skip if build fails - it's optional optimization
+RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "Flash Attention not installed - will use standard attention"
 
 # Copy requirements and install dependencies
 COPY requirements.txt /app/requirements.txt
