@@ -294,11 +294,10 @@ class WebSocketASRServer:
         session.state = ClientState.PROCESSING
         
         try:
-            # Транскрипция
+            # Транскрипция (NeMo 2.0.0 API - timestamps автоматически)
             result = self.engine.transcribe_audio_array(
                 audio_chunk,
-                sample_rate=16000,  # Буфер уже нормализует до 16kHz
-                timestamps=session.include_timestamps
+                sample_rate=16000  # Буфер уже нормализует до 16kHz
             )
             
             # Обновляем накопленный текст

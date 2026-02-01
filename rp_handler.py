@@ -218,7 +218,6 @@ def process_batch_transcription(job: Dict) -> Dict[str, Any]:
                 # Транскрипция
                 result = engine.transcribe(
                     [chunk_path],
-                    timestamps=timestamps,
                     use_local_attention=use_local_attention
                 )[0]
                 
@@ -236,7 +235,6 @@ def process_batch_transcription(job: Dict) -> Dict[str, Any]:
             # Обычная транскрипция
             results = engine.transcribe(
                 [audio_path],
-                timestamps=timestamps,
                 use_local_attention=use_local_attention
             )
             result = results[0]

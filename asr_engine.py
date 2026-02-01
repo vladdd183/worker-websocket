@@ -1,12 +1,12 @@
 """
 ASR Engine - загрузка и оптимизация модели parakeet-tdt-0.6b-v3
 
+Совместимость: NeMo 2.0.0 (контейнер nvcr.io/nvidia/nemo:24.09)
+
 Оптимизации:
-- Flash Attention 2 (если доступен)
 - BF16/FP16 precision
-- torch.compile для JIT-оптимизации
 - Local attention для длинных аудио
-- CUDA Graphs для низкой latency
+- CUDA optimizations
 """
 
 import os
@@ -20,28 +20,17 @@ import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Глобальные настройки оптимизации
+# Глобальные настройки
 MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v3"
-USE_FLASH_ATTENTION = True
-USE_TORCH_COMPILE = False  # Отключено для быстрого cold start (~30-60 сек экономии)
-USE_BF16 = True  # BF16 быстрее на Ampere+, FP16 на старых GPU
-SKIP_WARMUP = False  # Пропустить warmup для ещё более быстрого cold start
+USE_BF16 = True  # BF16 быстрее на Ampere+
+SKIP_WARMUP = False
 
 # RunPod Cached Models path
 RUNPOD_CACHE_DIR = "/runpod-volume/huggingface-cache/hub"
 
 
 def find_cached_model_path(model_name: str) -> Optional[str]:
-    """
-    Поиск модели в кэше RunPod Cached Models
-    
-    Args:
-        model_name: Имя модели (например 'nvidia/parakeet-tdt-0.6b-v3')
-        
-    Returns:
-        Путь к модели или None если не найдена
-    """
-    # Конвертируем формат: "nvidia/parakeet-tdt-0.6b-v3" -> "models--nvidia--parakeet-tdt-0.6b-v3"
+    """Поиск модели в кэше RunPod"""
     cache_name = model_name.replace("/", "--")
     snapshots_dir = os.path.join(RUNPOD_CACHE_DIR, f"models--{cache_name}", "snapshots")
     
@@ -70,19 +59,13 @@ class TranscriptionResult:
 class ASREngine:
     """
     Движок распознавания речи на базе parakeet-tdt-0.6b-v3
-    
-    Поддерживает:
-    - Batch inference для высокого throughput
-    - Streaming inference для low latency
-    - Автоматическое определение языка (25 европейских языков)
-    - Timestamps на уровне слов и сегментов
+    Совместим с NeMo 2.0.0
     """
     
     _instance = None
     _model = None
     
     def __new__(cls):
-        """Singleton pattern - модель загружается один раз"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -113,20 +96,16 @@ class ASREngine:
         cached_path = find_cached_model_path(MODEL_NAME)
         
         if cached_path:
-            # Загружаем из локального кэша RunPod
             logger.info(f"Загрузка из RunPod cache: {cached_path}")
-            # Ищем .nemo файл в директории
             nemo_files = [f for f in os.listdir(cached_path) if f.endswith('.nemo')]
             if nemo_files:
                 model_file = os.path.join(cached_path, nemo_files[0])
                 logger.info(f"Найден .nemo файл: {model_file}")
                 self._model = nemo_asr.models.ASRModel.restore_from(model_file)
             else:
-                # Пробуем загрузить как HuggingFace модель
                 logger.info("Файл .nemo не найден, загрузка через from_pretrained...")
                 self._model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
         else:
-            # Загружаем из HuggingFace (будет скачано)
             logger.info("Загрузка из HuggingFace...")
             self._model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
         
@@ -135,16 +114,16 @@ class ASREngine:
         # Применяем оптимизации
         self._apply_optimizations()
         
-        # Прогрев модели (warmup)
+        # Прогрев модели
         self._warmup()
         
         load_time = time.time() - start_time
         logger.info(f"Модель загружена за {load_time:.2f} секунд")
     
     def _apply_optimizations(self):
-        """Применение всех оптимизаций для максимальной скорости"""
+        """Применение оптимизаций"""
         
-        # 1. Half precision (BF16 или FP16)
+        # Half precision
         if self.device.type == "cuda":
             if USE_BF16 and torch.cuda.is_bf16_supported():
                 logger.info("Включаем BF16 precision")
@@ -153,28 +132,10 @@ class ASREngine:
                 logger.info("Включаем FP16 precision")
                 self._model = self._model.half()
         
-        # 2. Evaluation mode
+        # Evaluation mode
         self._model.eval()
         
-        # 3. torch.compile отключён для быстрого cold start
-        # Компиляция занимает 30-60 сек при первом запуске
-        # Если нужна максимальная скорость inference (после cold start),
-        # можно включить: USE_TORCH_COMPILE = True
-        if USE_TORCH_COMPILE and hasattr(torch, 'compile'):
-            try:
-                logger.info("Применяем torch.compile (это займёт время)...")
-                self._model = torch.compile(
-                    self._model, 
-                    mode="reduce-overhead",
-                    fullgraph=False
-                )
-                logger.info("torch.compile применён успешно")
-            except Exception as e:
-                logger.warning(f"torch.compile не удалось применить: {e}")
-        else:
-            logger.info("torch.compile отключён для быстрого cold start")
-        
-        # 4. CUDA optimizations
+        # CUDA optimizations
         if self.device.type == "cuda":
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
@@ -182,18 +143,16 @@ class ASREngine:
             logger.info("CUDA TF32 и cuDNN benchmark включены")
     
     def _warmup(self):
-        """Прогрев модели для стабильной latency"""
+        """Прогрев модели"""
         if SKIP_WARMUP:
-            logger.info("Warmup пропущен (SKIP_WARMUP=True)")
+            logger.info("Warmup пропущен")
             return
         
-        logger.info("Прогрев модели (1 итерация)...")
+        logger.info("Прогрев модели...")
         
-        # Создаём dummy аудио (0.5 секунды - минимум для быстрого warmup)
         sample_rate = 16000
         dummy_audio = np.zeros(sample_rate // 2, dtype=np.float32)
         
-        # Одна итерация прогрева (достаточно для инициализации CUDA kernels)
         with torch.no_grad(), torch.inference_mode():
             try:
                 import tempfile
@@ -201,39 +160,38 @@ class ASREngine:
                 
                 with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
                     sf.write(f.name, dummy_audio, sample_rate)
-                    _ = self._model.transcribe([f.name])
+                    _ = self._model.transcribe([f.name], batch_size=1)
             except Exception as e:
                 logger.warning(f"Warmup не удался: {e}")
         
         logger.info("Прогрев завершён")
     
-    def configure_for_long_audio(self, max_duration_minutes: float = 24):
+    def configure_for_long_audio(self, use_local: bool = True):
         """
-        Настройка модели для длинных аудио с использованием local attention
+        Настройка модели для длинных аудио
         
         Args:
-            max_duration_minutes: Если аудио длиннее, используется local attention
+            use_local: True для local attention (длинные аудио), False для full attention
         """
-        # Переключение на local attention для аудио > 24 минут
-        # Это позволяет обрабатывать аудио до 3 часов
-        if max_duration_minutes > 24:
-            logger.info("Включаем local attention для длинных аудио")
-            self._model.change_attention_model(
-                self_attention_model="rel_pos_local_attn",
-                att_context_size=[256, 256]  # ~16 секунд контекста
-            )
-        else:
-            # Full attention для лучшего качества на коротких аудио
-            logger.info("Используем full attention")
-            self._model.change_attention_model(
-                self_attention_model="rel_pos",
-                att_context_size=None
-            )
+        try:
+            if use_local:
+                logger.info("Включаем local attention для длинных аудио")
+                self._model.change_attention_model(
+                    self_attention_model="rel_pos_local_attn",
+                    att_context_size=[256, 256]
+                )
+            else:
+                logger.info("Используем full attention")
+                self._model.change_attention_model(
+                    self_attention_model="rel_pos",
+                    att_context_size=None
+                )
+        except Exception as e:
+            logger.warning(f"Не удалось изменить attention model: {e}")
     
     def transcribe(
         self,
         audio_paths: Union[str, List[str]],
-        timestamps: bool = True,
         batch_size: int = 1,
         use_local_attention: bool = False
     ) -> List[TranscriptionResult]:
@@ -242,8 +200,7 @@ class ASREngine:
         
         Args:
             audio_paths: Путь к файлу или список путей
-            timestamps: Включить timestamps слов и сегментов
-            batch_size: Размер батча для параллельной обработки
+            batch_size: Размер батча
             use_local_attention: Использовать local attention для длинных аудио
             
         Returns:
@@ -254,18 +211,19 @@ class ASREngine:
         if isinstance(audio_paths, str):
             audio_paths = [audio_paths]
         
-        # Настройка attention для длинных аудио
+        # Настройка attention
         if use_local_attention:
-            self.configure_for_long_audio(max_duration_minutes=180)
+            self.configure_for_long_audio(use_local=True)
         
         start_time = time.time()
         
         with torch.no_grad():
-            # Inference с timestamps
+            # NeMo 2.0.0 transcribe API
             outputs = self._model.transcribe(
                 audio_paths,
                 batch_size=batch_size,
-                timestamps=timestamps
+                return_hypotheses=True,  # Для получения timestamps
+                verbose=False
             )
         
         processing_time = time.time() - start_time
@@ -273,15 +231,26 @@ class ASREngine:
         # Формируем результаты
         results = []
         for i, output in enumerate(outputs):
+            # output может быть строкой или объектом Hypothesis
+            if hasattr(output, 'text'):
+                text = output.text
+            elif isinstance(output, str):
+                text = output
+            else:
+                text = str(output)
+            
             result = TranscriptionResult(
-                text=output.text if hasattr(output, 'text') else str(output),
+                text=text,
                 processing_time=processing_time / len(audio_paths)
             )
             
-            # Добавляем timestamps если есть
-            if timestamps and hasattr(output, 'timestamp'):
-                result.word_timestamps = output.timestamp.get('word', [])
-                result.segment_timestamps = output.timestamp.get('segment', [])
+            # Пробуем получить timestamps (если доступны)
+            if hasattr(output, 'timestep'):
+                result.word_timestamps = getattr(output, 'timestep', {}).get('word', [])
+                result.segment_timestamps = getattr(output, 'timestep', {}).get('segment', [])
+            elif hasattr(output, 'timestamp'):
+                result.word_timestamps = getattr(output, 'timestamp', {}).get('word', [])
+                result.segment_timestamps = getattr(output, 'timestamp', {}).get('segment', [])
             
             results.append(result)
         
@@ -290,32 +259,32 @@ class ASREngine:
     def transcribe_audio_array(
         self,
         audio_array: np.ndarray,
-        sample_rate: int = 16000,
-        timestamps: bool = True
+        sample_rate: int = 16000
     ) -> TranscriptionResult:
         """
         Транскрипция из numpy array (для streaming)
         
         Args:
-            audio_array: Аудио данные как numpy array
-            sample_rate: Частота дискретизации (должна быть 16000)
-            timestamps: Включить timestamps
+            audio_array: Аудио данные
+            sample_rate: Частота дискретизации
             
         Returns:
             TranscriptionResult
         """
         import tempfile
         import soundfile as sf
-        import time
         
         # Ресэмплинг если нужно
         if sample_rate != 16000:
-            import librosa
-            audio_array = librosa.resample(
-                audio_array, 
-                orig_sr=sample_rate, 
-                target_sr=16000
-            )
+            try:
+                import librosa
+                audio_array = librosa.resample(
+                    audio_array, 
+                    orig_sr=sample_rate, 
+                    target_sr=16000
+                )
+            except ImportError:
+                logger.warning("librosa не установлен, ресэмплинг пропущен")
         
         # Нормализация
         if audio_array.dtype != np.float32:
@@ -324,24 +293,20 @@ class ASREngine:
         if np.abs(audio_array).max() > 1.0:
             audio_array = audio_array / np.abs(audio_array).max()
         
-        # Сохраняем во временный файл (NeMo требует файл)
+        # Сохраняем во временный файл
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
             sf.write(f.name, audio_array, 16000)
-            results = self.transcribe([f.name], timestamps=timestamps)
+            results = self.transcribe([f.name])
         
         return results[0] if results else TranscriptionResult(text="")
     
     def get_model_info(self) -> Dict[str, Any]:
-        """Информация о модели и её настройках"""
+        """Информация о модели"""
         info = {
             "model_name": MODEL_NAME,
             "device": str(self.device),
             "dtype": str(next(self._model.parameters()).dtype),
-            "optimizations": {
-                "flash_attention": USE_FLASH_ATTENTION,
-                "torch_compile": USE_TORCH_COMPILE,
-                "bf16": USE_BF16
-            }
+            "nemo_version": "2.0.0"
         }
         
         if self.device.type == "cuda":
@@ -354,7 +319,7 @@ class ASREngine:
         return info
 
 
-# Глобальный экземпляр движка (lazy initialization)
+# Глобальный экземпляр
 _engine: Optional[ASREngine] = None
 
 
@@ -368,24 +333,12 @@ def get_engine() -> ASREngine:
 
 def transcribe_file(
     audio_path: str,
-    timestamps: bool = True,
     use_local_attention: bool = False
 ) -> TranscriptionResult:
-    """
-    Удобная функция для транскрипции одного файла
-    
-    Args:
-        audio_path: Путь к аудио файлу
-        timestamps: Включить timestamps
-        use_local_attention: Использовать local attention для длинных аудио
-        
-    Returns:
-        TranscriptionResult
-    """
+    """Транскрипция файла"""
     engine = get_engine()
     results = engine.transcribe(
         [audio_path], 
-        timestamps=timestamps,
         use_local_attention=use_local_attention
     )
     return results[0] if results else TranscriptionResult(text="")
@@ -393,26 +346,14 @@ def transcribe_file(
 
 def transcribe_audio(
     audio_array: np.ndarray,
-    sample_rate: int = 16000,
-    timestamps: bool = True
+    sample_rate: int = 16000
 ) -> TranscriptionResult:
-    """
-    Удобная функция для транскрипции numpy array
-    
-    Args:
-        audio_array: Аудио данные
-        sample_rate: Частота дискретизации
-        timestamps: Включить timestamps
-        
-    Returns:
-        TranscriptionResult
-    """
+    """Транскрипция numpy array"""
     engine = get_engine()
-    return engine.transcribe_audio_array(audio_array, sample_rate, timestamps)
+    return engine.transcribe_audio_array(audio_array, sample_rate)
 
 
 if __name__ == "__main__":
-    # Тестирование
     engine = get_engine()
     print("Информация о модели:")
     print(engine.get_model_info())
