@@ -16,17 +16,48 @@
         <!-- Connection Section -->
         <section class="connection-section card">
             <h2>Подключение к воркеру</h2>
-            <div class="connection-form">
-                <div class="input-group">
-                    <label for="ws-url">WebSocket URL:</label>
-                    <input type="text" id="ws-url" value="ws://localhost:8765" placeholder="ws://IP:PORT">
-                </div>
-                <div class="button-group">
-                    <button id="connect-btn" class="btn btn-primary">Подключиться</button>
-                    <button id="disconnect-btn" class="btn btn-secondary" disabled>Отключиться</button>
-                    <button id="healthcheck-btn" class="btn btn-info" disabled>Healthcheck</button>
+            
+            <!-- Step 1: Launch Worker -->
+            <div class="connection-step">
+                <h3>Шаг 1: Запустить воркер на RunPod</h3>
+                <div class="runpod-config">
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="runpod-api-key">API Key:</label>
+                            <input type="password" id="runpod-api-key" placeholder="rpa_XXXXXXXXXXXX">
+                        </div>
+                        <div class="input-group">
+                            <label for="runpod-endpoint-id">Endpoint ID:</label>
+                            <input type="text" id="runpod-endpoint-id" value="j9y5ancy39k1th" placeholder="abc123xyz">
+                        </div>
+                    </div>
+                    <div class="button-group">
+                        <button id="launch-worker-btn" class="btn btn-primary">🚀 Запустить воркер</button>
+                        <button id="stop-worker-btn" class="btn btn-danger" disabled>⏹️ Остановить</button>
+                    </div>
+                    <div id="worker-status" class="worker-status">
+                        <span class="status-text">Воркер не запущен</span>
+                    </div>
                 </div>
             </div>
+
+            <!-- Step 2: Connect WebSocket -->
+            <div class="connection-step">
+                <h3>Шаг 2: Подключиться к WebSocket</h3>
+                <p class="hint">После запуска воркера, скопируй IP и порт из RunPod Dashboard → Pods → твой Pod</p>
+                <div class="connection-form">
+                    <div class="input-group">
+                        <label for="ws-url">WebSocket URL:</label>
+                        <input type="text" id="ws-url" placeholder="ws://IP:8765">
+                    </div>
+                    <div class="button-group">
+                        <button id="connect-btn" class="btn btn-success">🔌 Подключиться</button>
+                        <button id="disconnect-btn" class="btn btn-secondary" disabled>Отключиться</button>
+                        <button id="healthcheck-btn" class="btn btn-info" disabled>Ping</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="connection-status" class="status status-disconnected">
                 <span class="status-dot"></span>
                 <span class="status-text">Не подключено</span>

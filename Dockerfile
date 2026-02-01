@@ -1,5 +1,5 @@
-# Base image with CUDA 12.1 and cuDNN for optimal performance
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+# Base image with CUDA 12.4 and cuDNN for optimal performance
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -29,11 +29,11 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # Install numpy first (required for PyTorch)
 RUN pip install --no-cache-dir numpy
 
-# Install PyTorch with CUDA 12.1 support
+# Install PyTorch 2.5 with CUDA 12.4 support (required for NeMo 2.x)
 RUN pip install --no-cache-dir \
-    torch==2.2.0 \
-    torchaudio==2.2.0 \
-    --index-url https://download.pytorch.org/whl/cu121
+    torch==2.5.0 \
+    torchaudio==2.5.0 \
+    --index-url https://download.pytorch.org/whl/cu124
 
 # Install Flash Attention 2 (requires CUDA development tools)
 # Skip if build fails - it's optional optimization

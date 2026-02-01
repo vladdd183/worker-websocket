@@ -265,6 +265,99 @@ input[type="radio"] {
     font-family: monospace;
 }
 
+/* === Connection Steps === */
+.connection-step {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: var(--bg);
+    border-radius: var(--radius);
+}
+
+.connection-step h3 {
+    margin: 0 0 10px 0;
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.connection-step .hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 15px;
+}
+
+/* === RunPod Config === */
+.runpod-config {
+    margin-bottom: 10px;
+}
+
+.input-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.input-row .input-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+input[type="password"] {
+    width: 100%;
+    padding: 10px 15px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 14px;
+}
+
+input[type="password"]:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.worker-status {
+    margin-top: 15px;
+    padding: 12px 15px;
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.worker-status.starting {
+    border-left: 3px solid var(--warning);
+}
+
+.worker-status.running {
+    border-left: 3px solid var(--success);
+}
+
+.worker-status.error {
+    border-left: 3px solid var(--danger);
+}
+
+.worker-status .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 768px) {
+    .input-row {
+        flex-direction: column;
+    }
+}
+
 /* === Tabs === */
 .tabs {
     display: flex;

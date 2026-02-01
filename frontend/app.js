@@ -11,6 +11,11 @@ const state = {
     websocket: null,
     connected: false,
     
+    // RunPod
+    runpodJobId: null,
+    runpodWorkerRunning: false,
+    runpodPollingInterval: null,
+    
     // Recording
     recorder: null,
     recording: false,
@@ -41,6 +46,13 @@ const state = {
 // ============================================
 
 const elements = {
+    // RunPod
+    runpodApiKey: document.getElementById('runpod-api-key'),
+    runpodEndpointId: document.getElementById('runpod-endpoint-id'),
+    launchWorkerBtn: document.getElementById('launch-worker-btn'),
+    stopWorkerBtn: document.getElementById('stop-worker-btn'),
+    workerStatus: document.getElementById('worker-status'),
+    
     // Connection
     wsUrl: document.getElementById('ws-url'),
     connectBtn: document.getElementById('connect-btn'),
@@ -144,6 +156,246 @@ function log(message, type = 'info') {
     }
     
     console.log(`[${type.toUpperCase()}] ${message}`);
+}
+
+
+// ============================================
+// RunPod API
+// ============================================
+
+const RUNPOD_API_BASE = 'https://api.runpod.ai/v2';
+
+async function launchRunpodWorker() {
+    const apiKey = elements.runpodApiKey.value.trim();
+    const endpointId = elements.runpodEndpointId.value.trim();
+    
+    if (!apiKey) {
+        log('Введите RunPod API Key', 'error');
+        return;
+    }
+    if (!endpointId) {
+        log('Введите Endpoint ID', 'error');
+        return;
+    }
+    
+    // Сохраняем в localStorage
+    localStorage.setItem('runpod_api_key', apiKey);
+    localStorage.setItem('runpod_endpoint_id', endpointId);
+    
+    log('Запуск воркера на RunPod...', 'info');
+    updateWorkerStatus('starting', 'Запуск воркера...');
+    
+    elements.launchWorkerBtn.disabled = true;
+    
+    try {
+        // Отправляем запрос на запуск воркера в режиме websocket
+        const response = await fetch(`${RUNPOD_API_BASE}/${endpointId}/run`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                input: {
+                    mode: 'websocket'
+                }
+            })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        
+        const data = await response.json();
+        state.runpodJobId = data.id;
+        
+        log(`Job создан: ${data.id}`, 'success');
+        log('Ожидание запуска воркера (cold start ~15-60 сек)...', 'info');
+        updateWorkerStatus('starting', `Job: ${data.id} - Ожидание запуска...`);
+        
+        // Начинаем polling статуса
+        startRunpodPolling(apiKey, endpointId, data.id);
+        
+    } catch (error) {
+        log(`Ошибка запуска воркера: ${error.message}`, 'error');
+        updateWorkerStatus('error', `Ошибка: ${error.message}`);
+        elements.launchWorkerBtn.disabled = false;
+    }
+}
+
+function startRunpodPolling(apiKey, endpointId, jobId) {
+    let pollCount = 0;
+    const maxPolls = 180; // 3 минуты максимум (cold start может быть долгим)
+    let wsUrlFound = false;
+    
+    state.runpodPollingInterval = setInterval(async () => {
+        pollCount++;
+        
+        if (pollCount > maxPolls) {
+            clearInterval(state.runpodPollingInterval);
+            log('Таймаут ожидания воркера (3 мин)', 'error');
+            updateWorkerStatus('error', 'Таймаут');
+            elements.launchWorkerBtn.disabled = false;
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${RUNPOD_API_BASE}/${endpointId}/status/${jobId}`, {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`
+                }
+            });
+            
+            const data = await response.json();
+            
+            // Показываем статус только каждые 5 секунд или при смене
+            if (pollCount % 5 === 0) {
+                log(`Статус: ${data.status} (${pollCount}с)`, 'info');
+            }
+            
+            // Пробуем найти websocket_url в разных местах
+            let wsUrl = null;
+            
+            // 1. В прямом output
+            if (data.output && data.output.websocket_url) {
+                wsUrl = data.output.websocket_url;
+            }
+            // 2. В stream массиве
+            else if (data.stream && Array.isArray(data.stream)) {
+                for (const item of data.stream) {
+                    if (item && item.output && item.output.websocket_url) {
+                        wsUrl = item.output.websocket_url;
+                        break;
+                    }
+                    // Иногда stream содержит напрямую объект
+                    if (item && item.websocket_url) {
+                        wsUrl = item.websocket_url;
+                        break;
+                    }
+                }
+            }
+            // 3. Пробуем парсить output как строку (progress_update иногда возвращает строку)
+            else if (data.output && typeof data.output === 'string') {
+                const match = data.output.match(/ws:\/\/[\d.]+:\d+/);
+                if (match) {
+                    wsUrl = match[0];
+                }
+            }
+            
+            if (wsUrl && !wsUrlFound) {
+                wsUrlFound = true;
+                clearInterval(state.runpodPollingInterval);
+                handleWorkerReady({ websocket_url: wsUrl });
+                return;
+            }
+            
+            if (data.status === 'IN_PROGRESS') {
+                updateWorkerStatus('starting', `Воркер запускается... (${pollCount}с)`);
+            } else if (data.status === 'IN_QUEUE') {
+                updateWorkerStatus('starting', `В очереди... (${pollCount}с)`);
+            } else if (data.status === 'COMPLETED') {
+                clearInterval(state.runpodPollingInterval);
+                if (wsUrl || (data.output && data.output.websocket_url)) {
+                    handleWorkerReady(data.output);
+                } else {
+                    log('Воркер завершился. Output: ' + JSON.stringify(data.output), 'warning');
+                    updateWorkerStatus('error', 'Воркер завершился');
+                    elements.launchWorkerBtn.disabled = false;
+                }
+            } else if (data.status === 'FAILED') {
+                clearInterval(state.runpodPollingInterval);
+                log(`Воркер упал: ${JSON.stringify(data.error || data.output)}`, 'error');
+                updateWorkerStatus('error', 'Ошибка воркера');
+                elements.launchWorkerBtn.disabled = false;
+            }
+            
+        } catch (error) {
+            log(`Ошибка polling: ${error.message}`, 'warning');
+        }
+        
+    }, 1000); // Каждую секунду
+}
+
+function handleWorkerReady(output) {
+    const wsUrl = output.websocket_url;
+    
+    log(`Воркер готов! WebSocket: ${wsUrl}`, 'success');
+    updateWorkerStatus('running', `Воркер запущен: ${wsUrl}`);
+    
+    state.runpodWorkerRunning = true;
+    elements.stopWorkerBtn.disabled = false;
+    
+    // Автоматически подключаемся
+    elements.wsUrl.value = wsUrl;
+    connect();
+}
+
+async function stopRunpodWorker() {
+    if (state.runpodPollingInterval) {
+        clearInterval(state.runpodPollingInterval);
+    }
+    
+    // Отключаемся от WebSocket
+    if (state.websocket) {
+        // Отправляем команду shutdown
+        sendCommand({ action: 'shutdown' });
+        setTimeout(() => {
+            disconnect();
+        }, 500);
+    }
+    
+    // Можно также принудительно отменить job через API
+    const apiKey = elements.runpodApiKey.value.trim();
+    const endpointId = elements.runpodEndpointId.value.trim();
+    
+    if (apiKey && endpointId && state.runpodJobId) {
+        try {
+            await fetch(`${RUNPOD_API_BASE}/${endpointId}/cancel/${state.runpodJobId}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`
+                }
+            });
+            log('Job отменён', 'info');
+        } catch (e) {
+            // Игнорируем ошибки отмены
+        }
+    }
+    
+    state.runpodWorkerRunning = false;
+    state.runpodJobId = null;
+    
+    updateWorkerStatus('', 'Воркер остановлен');
+    elements.launchWorkerBtn.disabled = false;
+    elements.stopWorkerBtn.disabled = true;
+    
+    log('Воркер остановлен', 'info');
+}
+
+function updateWorkerStatus(status, text) {
+    elements.workerStatus.className = `worker-status ${status}`;
+    
+    let html = '';
+    if (status === 'starting') {
+        html = '<div class="spinner"></div>';
+    }
+    html += `<span class="status-text">${text}</span>`;
+    
+    elements.workerStatus.innerHTML = html;
+}
+
+// Загрузка сохранённых настроек
+function loadSavedSettings() {
+    const savedApiKey = localStorage.getItem('runpod_api_key');
+    const savedEndpointId = localStorage.getItem('runpod_endpoint_id');
+    
+    if (savedApiKey) {
+        elements.runpodApiKey.value = savedApiKey;
+    }
+    if (savedEndpointId) {
+        elements.runpodEndpointId.value = savedEndpointId;
+    }
 }
 
 
@@ -907,7 +1159,11 @@ function updateControlsState() {
 // Event Listeners
 // ============================================
 
-// Connection
+// RunPod
+elements.launchWorkerBtn.addEventListener('click', launchRunpodWorker);
+elements.stopWorkerBtn.addEventListener('click', stopRunpodWorker);
+
+// Connection (direct WebSocket)
 elements.connectBtn.addEventListener('click', connect);
 elements.disconnectBtn.addEventListener('click', disconnect);
 elements.healthcheckBtn.addEventListener('click', () => sendCommand({ action: 'ping' }));
@@ -1008,5 +1264,8 @@ document.addEventListener('keydown', (e) => {
 // Initialization
 // ============================================
 
+// Загружаем сохранённые настройки
+loadSavedSettings();
+
 log('Parakeet ASR Frontend загружен', 'success');
-log('Подключитесь к WebSocket серверу для начала работы', 'info');
+log('Нажмите "Запустить воркер" для начала работы', 'info');
