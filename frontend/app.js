@@ -197,7 +197,7 @@ async function launchRunpodWorker() {
             },
             body: JSON.stringify({
                 input: {
-                    mode: 'websocket'
+                    action: 'websocket'
                 }
             })
         });

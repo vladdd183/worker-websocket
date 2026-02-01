@@ -115,7 +115,7 @@ class WebSocketASRServer:
         logger.info("Получен сигнал остановки...")
         self._shutdown_event.set()
     
-    async def _handle_client(self, websocket: WebSocketServerProtocol, path: str):
+    async def _handle_client(self, websocket: WebSocketServerProtocol):
         """Обработка подключения клиента"""
         client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
         logger.info(f"Новое подключение: {client_id}")
