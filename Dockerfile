@@ -43,8 +43,12 @@ RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "Flash At
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# NOTE: Model will be downloaded on first run (cold start ~60-90 sec)
-# Pre-downloading during build requires GPU which is not available at build time
+# Pre-download model files using huggingface-cli (no GPU required!)
+# This downloads only the files to cache, doesn't load the model into memory
+# NeMo will find them in the HuggingFace cache when loading
+RUN pip install --no-cache-dir huggingface-hub && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download('nvidia/parakeet-tdt-0.6b-v3')" && \
+    echo "Model files downloaded successfully to HuggingFace cache"
 
 # Copy application files
 COPY asr_engine.py /app/
