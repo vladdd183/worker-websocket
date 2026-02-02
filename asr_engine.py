@@ -6,11 +6,22 @@ ASR Engine - загрузка и оптимизация модели parakeet-td
 Оптимизации:
 - BF16/FP16 precision
 - Local attention для длинных аудио
-- CUDA optimizations
+- CUDA optimizations (без CUDA Graphs для streaming)
 """
 
 import os
+
+# ВАЖНО: Отключаем CUDA Graphs ДО импорта torch/nemo
+# CUDA Graphs не совместимы с динамическими размерами входных данных (streaming)
+os.environ["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "0"
+os.environ["NEMO_DISABLE_CUDAGRAPHS"] = "1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import torch
+
+# Отключаем CUDA Graphs в PyTorch
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.cache_size_limit = 1
 import logging
 from typing import Optional, List, Dict, Any, Union
 from dataclasses import dataclass
@@ -123,6 +134,10 @@ class ASREngine:
     def _apply_optimizations(self):
         """Применение оптимизаций"""
         
+        # ВАЖНО: Отключаем CUDA Graphs в декодере TDT
+        # Это решает ошибку "CUDAGraph::replay without capture"
+        self._disable_cuda_graph_decoder()
+        
         # Half precision
         if self.device.type == "cuda":
             if USE_BF16 and torch.cuda.is_bf16_supported():
@@ -135,12 +150,43 @@ class ASREngine:
         # Evaluation mode
         self._model.eval()
         
-        # CUDA optimizations
+        # CUDA optimizations для streaming
         if self.device.type == "cuda":
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-            torch.backends.cudnn.benchmark = True
-            logger.info("CUDA TF32 и cuDNN benchmark включены")
+            # ВАЖНО: benchmark=False для streaming с динамическими размерами
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = False
+            logger.info("CUDA TF32 включён, cuDNN benchmark отключён (streaming mode)")
+    
+    def _disable_cuda_graph_decoder(self):
+        """Отключение CUDA Graphs в TDT декодере"""
+        try:
+            from nemo.collections.asr.parts.submodules.rnnt_decoding import RNNTDecodingConfig
+            
+            # Создаём конфиг без CUDA Graphs
+            decoding_cfg = RNNTDecodingConfig(
+                strategy="greedy_batch",
+                model_type="tdt",
+                fused_batch_size=-1
+            )
+            decoding_cfg.greedy.loop_labels = True
+            decoding_cfg.greedy.use_cuda_graph_decoder = False  # Отключаем CUDA Graphs!
+            
+            # Применяем конфиг
+            self._model.change_decoding_strategy(decoding_cfg)
+            logger.info("CUDA Graph decoder отключён для TDT модели")
+            
+        except Exception as e:
+            logger.warning(f"Не удалось отключить CUDA Graph decoder: {e}")
+            # Пробуем альтернативный способ
+            try:
+                if hasattr(self._model, 'decoding') and hasattr(self._model.decoding, 'decoding'):
+                    if hasattr(self._model.decoding.decoding, 'use_cuda_graph_decoder'):
+                        self._model.decoding.decoding.use_cuda_graph_decoder = False
+                        logger.info("CUDA Graph decoder отключён (альтернативный способ)")
+            except Exception as e2:
+                logger.warning(f"Альтернативный способ тоже не сработал: {e2}")
     
     def _warmup(self):
         """Прогрев модели"""
@@ -216,6 +262,10 @@ class ASREngine:
             self.configure_for_long_audio(use_local=True)
         
         start_time = time.time()
+        
+        # Очищаем CUDA кэш перед транскрипцией (избегаем CUDA Graph проблем)
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
         
         with torch.no_grad():
             # NeMo 2.0.0 transcribe API

@@ -23,9 +23,10 @@ WORKDIR /app
 
 # Install additional Python dependencies
 # NeMo уже установлен в базовом образе, добавляем только недостающее
+# websockets==10.4 для совместимости с handler(websocket, path) сигнатурой
 RUN pip install --no-cache-dir \
     runpod>=1.7.0 \
-    websockets>=12.0 \
+    websockets==10.4 \
     aiohttp>=3.9.0 \
     pydub>=0.25.0
 
@@ -41,8 +42,11 @@ EXPOSE 8765 8000
 
 # Set environment variables for optimization
 ENV CUDA_MODULE_LOADING=LAZY
-ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 ENV TOKENIZERS_PARALLELISM=false
+
+# ВАЖНО: Отключаем CUDA Graphs для streaming (динамические размеры входов)
+ENV NEMO_DISABLE_CUDAGRAPHS=1
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 
 # Pre-download model during build (optional, speeds up cold start)
 # Uncomment if you want model baked into image (~2.5GB larger image)
